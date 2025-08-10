@@ -1,18 +1,38 @@
-// /api/extract-required-data/route.js
 import { NextResponse } from 'next/server';
 import axios from 'axios';
+import prisma from '@/lib/prisma';
 
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL_NAME = 'deepseek/deepseek-chat-v3-0324:free';
 
+function cleanToJsonArray(raw) {
+  if (!raw) return '[]';
+  let cleaned = raw.replace(/```json|```/g, '').trim();
+
+  // Try direct parse
+  try {
+    JSON.parse(cleaned);
+    return cleaned;
+  } catch {}
+
+  // Try to extract first JSON array in the text
+  const match = cleaned.match(/\[[\s\S]*\]/);
+  if (match) {
+    try {
+      JSON.parse(match[0]);
+      return match[0];
+    } catch {}
+  }
+
+  return '[]';
+}
+
 export async function POST(req) {
   try {
-    const { url, userStory, testCode } = await req.json();
+    const { url, userStory, testCode, storyId } = await req.json();
 
     let prompt;
-
     if (testCode) {
-      // Extract data from existing test code
       prompt = `Analyze this Cypress test code and extract all the required test data:
 
 ${testCode}
@@ -33,20 +53,11 @@ Return a JSON array of required data fields with this structure:
     "type": "text",
     "required": true,
     "placeholder": "Enter username"
-  },
-  {
-    "key": "password",
-    "name": "Password", 
-    "description": "Password for the user account",
-    "type": "password",
-    "required": true,
-    "placeholder": "Enter password"
   }
 ]
 
 Return only the JSON array without any markdown formatting.`;
     } else {
-      // Extract data requirements from URL and user story
       prompt = `Based on this user story and URL, determine what test data will be required:
 
 URL: ${url}
@@ -64,7 +75,7 @@ Return a JSON array of required data fields with this structure:
     "key": "username",
     "name": "Username",
     "description": "Valid username for login",
-    "type": "text", 
+    "type": "text",
     "required": true,
     "placeholder": "Enter username"
   }
@@ -83,10 +94,7 @@ Return only the JSON array without any markdown formatting.`;
             content:
               'You are a QA engineer expert at analyzing test requirements and extracting needed test data. Always return valid JSON arrays.',
           },
-          {
-            role: 'user',
-            content: prompt,
-          },
+          { role: 'user', content: prompt },
         ],
         temperature: 0.1,
         max_tokens: 1500,
@@ -100,39 +108,47 @@ Return only the JSON array without any markdown formatting.`;
       }
     );
 
-    const rawResponse = response.data.choices[0].message.content;
+    const rawResponse = response.data?.choices?.[0]?.message?.content || '[]';
+    const cleaned = cleanToJsonArray(rawResponse);
 
-    // Clean and parse JSON response
-    let cleanedResponse = rawResponse
-      .replace(/```json/g, '')
-      .replace(/```/g, '')
-      .trim();
-
+    let requiredData;
     try {
-      const requiredData = JSON.parse(cleanedResponse);
-      return NextResponse.json({ requiredData });
-    } catch (parseError) {
-      // Fallback if JSON parsing fails
-      const fallbackData = [
-        {
-          key: 'username',
-          name: 'Username',
-          description: 'Username for login',
-          type: 'text',
-          required: true,
-          placeholder: 'Enter username',
-        },
-        {
-          key: 'password',
-          name: 'Password',
-          description: 'Password for login',
-          type: 'password',
-          required: true,
-          placeholder: 'Enter password',
-        },
-      ];
-      return NextResponse.json({ requiredData: fallbackData });
+      requiredData = JSON.parse(cleaned);
+      if (!Array.isArray(requiredData)) requiredData = [];
+    } catch {
+      requiredData = [];
     }
+
+    // Persist to DB if we have a storyId
+    if (storyId && requiredData.length) {
+      await Promise.all(
+        requiredData.map((f) =>
+          prisma.requiredField.upsert({
+            where: { storyId_key: { storyId, key: String(f.key) } }, // compound unique
+            update: {
+              name: String(f.name ?? f.key),
+              description: String(f.description ?? ''),
+              type: String(f.type ?? 'text'),
+              required: Boolean(f.required ?? false),
+              placeholder: f.placeholder ? String(f.placeholder) : null,
+              options: f.options ? f.options : null,
+            },
+            create: {
+              storyId,
+              key: String(f.key),
+              name: String(f.name ?? f.key),
+              description: String(f.description ?? ''),
+              type: String(f.type ?? 'text'),
+              required: Boolean(f.required ?? false),
+              placeholder: f.placeholder ? String(f.placeholder) : null,
+              options: f.options ? f.options : null,
+            },
+          })
+        )
+      );
+    }
+
+    return NextResponse.json({ requiredData });
   } catch (error) {
     console.error('Error extracting required data:', error);
     return NextResponse.json(

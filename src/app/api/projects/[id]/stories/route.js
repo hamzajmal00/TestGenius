@@ -17,7 +17,7 @@ export async function GET(_req, { params }) {
   const stories = await prisma.userStory.findMany({
     where: { projectId: params.id },
     orderBy: { createdAt: 'desc' },
-    select: { id: true, title: true, status: true },
+    select: { id: true, title: true, description: true, status: true },
   });
   return Response.json({ stories });
 }

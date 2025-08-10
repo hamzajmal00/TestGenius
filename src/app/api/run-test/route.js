@@ -1,15 +1,20 @@
-// app/api/run-test/route.js
 import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { exec } from 'child_process';
 import util from 'util';
+import prisma from '@/lib/prisma';
 
 const execPromise = util.promisify(exec);
 
 // 🧼 Clean AI-generated test code
 function cleanTestCode(code) {
-  return code?.replace(/```(javascript)?/g, '').trim() || '';
+  return (
+    code
+      ?.replace(/```(javascript|js|cypress)?/g, '')
+      .replace(/```/g, '')
+      .trim() || ''
+  );
 }
 
 // 📁 Ensure required Cypress folders
@@ -34,7 +39,8 @@ async function ensureCypressStructure() {
 
 export async function POST(req) {
   try {
-    const { testCode, testData = {}, url } = await req.json();
+    const body = await req.json();
+    const { testCode, testData = {}, url, generationId, storyId } = body;
 
     if (!testCode || !url) {
       return NextResponse.json(
@@ -46,7 +52,7 @@ export async function POST(req) {
     // 🧱 Ensure Cypress project folders
     await ensureCypressStructure();
 
-    // 🌍 Get baseUrl from full URL
+    // 🌍 baseUrl from URL
     const baseUrl = new URL(url).origin;
     const timestamp = Date.now();
     const fileName = `generated-${timestamp}.spec.cy.js`;
@@ -70,7 +76,6 @@ export async function POST(req) {
     const configPath = path.join(process.cwd(), 'cypress.config.js');
     const configContent = `
 const { defineConfig } = require('cypress');
-
 module.exports = defineConfig({
   e2e: {
     baseUrl: '${baseUrl}',
@@ -88,49 +93,150 @@ module.exports = defineConfig({
   },
 });
 `;
-
     try {
       await fs.access(configPath);
     } catch {
       await fs.writeFile(configPath, configContent, 'utf-8');
     }
 
+    // Ensure we have a generation to link the run to
+    let genId = generationId;
+    if (!genId && storyId) {
+      const g = await prisma.testGeneration.create({
+        data: {
+          storyId,
+          url,
+          model: 'manual/run-without-generator',
+          testCode: finalTestCode,
+        },
+        select: { id: true },
+      });
+      genId = g.id;
+    }
+
+    if (!genId) {
+      // Hard requirement: link runs to a generation for traceability
+      const g = await prisma.testGeneration.create({
+        data: {
+          storyId:
+            storyId ||
+            (
+              await prisma.userStory.findFirst({ select: { id: true } })
+            )?.id ||
+            'unknown',
+          url,
+          model: 'manual/run',
+          testCode: finalTestCode,
+        },
+        select: { id: true },
+      });
+      genId = g.id;
+    }
+
+    // Create RUN record (RUNNING)
+    const run = await prisma.testRun.create({
+      data: {
+        generationId: genId,
+        status: 'RUNNING',
+      },
+      select: { id: true },
+    });
+
     // ▶️ Run Cypress test
-    let result;
+    let stdout = '';
+    let stderr = '';
+    let passed = false;
+    let executionError = false;
+
     try {
-      const { stdout, stderr } = await execPromise(
+      const result = await execPromise(
         `npx cypress run --spec "cypress/e2e/${fileName}" --browser chrome --headless`,
         {
-          env: {
-            ...process.env,
-          },
+          env: { ...process.env },
           timeout: 120000,
         }
       );
-
-      const passed =
+      stdout = result.stdout || '';
+      stderr = result.stderr || '';
+      passed =
         stdout.includes('All specs passed!') ||
         (stdout.includes('passing') && !stdout.includes('failing'));
-
-      result = {
-        passed,
-        testCode: finalTestCode,
-        output: stdout,
-        errorOutput: stderr,
-        testFilePath: `cypress/e2e/${fileName}`,
-      };
     } catch (err) {
-      result = {
-        passed: false,
-        testCode: finalTestCode,
-        output: err.stdout || '',
-        errorOutput: err.stderr || err.message,
-        testFilePath: `cypress/e2e/${fileName}`,
-        executionError: true,
-      };
+      stdout = err.stdout || '';
+      stderr = err.stderr || err.message;
+      executionError = true;
+      passed = false;
     }
 
-    return NextResponse.json(result);
+    // Update RUN record
+    await prisma.testRun.update({
+      where: { id: run.id },
+      data: {
+        status: passed ? 'PASSED' : 'FAILED',
+        passed,
+        testFilePath: `cypress/e2e/${fileName}`,
+        output: stdout,
+        errorOutput: stderr,
+        executionError,
+        finishedAt: new Date(),
+      },
+    });
+
+    // Optional: update story status and project roll-up
+    const gen = await prisma.testGeneration.findUnique({
+      where: { id: genId },
+      select: { storyId: true },
+    });
+
+    if (gen?.storyId) {
+      await prisma.userStory.update({
+        where: { id: gen.storyId },
+        data: { status: passed ? 'DONE' : 'IN_PROGRESS' },
+      });
+
+      // Roll up to project status
+      const story = await prisma.userStory.findUnique({
+        where: { id: gen.storyId },
+        select: { projectId: true },
+      });
+
+      if (story?.projectId) {
+        const failing = await prisma.testRun.count({
+          where: {
+            status: 'FAILED',
+            generation: { story: { projectId: story.projectId } },
+          },
+        });
+        const passingCount = await prisma.testRun.count({
+          where: {
+            status: 'PASSED',
+            generation: { story: { projectId: story.projectId } },
+          },
+        });
+
+        await prisma.project.update({
+          where: { id: story.projectId },
+          data: {
+            testStatus:
+              failing > 0
+                ? 'FAILING'
+                : passingCount > 0
+                ? 'PASSING'
+                : 'PENDING',
+          },
+        });
+      }
+    }
+
+    return NextResponse.json({
+      passed,
+      testCode: finalTestCode,
+      output: stdout,
+      errorOutput: stderr,
+      testFilePath: `cypress/e2e/${fileName}`,
+      generationId: genId,
+      runId: run.id,
+    });
   } catch (err) {
     console.error('❌ Cypress execution failed:', err);
     return NextResponse.json(

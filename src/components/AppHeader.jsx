@@ -77,9 +77,9 @@ export default function AppHeader({ showSearch = true, onSearch }) {
           >
             Projects
           </Typography>
-          <Typography component='a' href='/settings' sx={{ cursor: 'pointer' }}>
+          {/* <Typography component='a' href='/settings' sx={{ cursor: 'pointer' }}>
             Settings
-          </Typography>
+          </Typography> */}
         </Stack>
 
         <Box sx={{ flexGrow: 1 }} />

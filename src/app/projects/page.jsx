@@ -21,20 +21,21 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import AppHeader from '@/components/AppHeader';
 import CreateProjectDialog from '@/components/CreateProjectDialog';
+import EditProjectDialog from '@/components/EditProjectDialog';
+import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import { useRouter } from 'next/navigation';
 
-// --- Mock data (replace with API data) ---
-
 function StatusPill({ value }) {
+  const v = (value || '').toString().toUpperCase(); // backend: PASSING|FAILING|PENDING
   const map = {
-    Passing: { bg: '#f1f5f9', color: 'text.primary' },
-    Failing: { bg: '#fee2e2', color: '#b91c1c' },
-    Pending: { bg: '#fef3c7', color: '#92400e' },
+    PASSING: { label: 'Passing', bg: '#f1f5f9', color: '#0f172a' },
+    FAILING: { label: 'Failing', bg: '#fee2e2', color: '#b91c1c' },
+    PENDING: { label: 'Pending', bg: '#fef3c7', color: '#92400e' },
   };
-  const { bg, color } = map[value] || map.Passing;
+  const { label, bg, color } = map[v] || map.PASSING;
   return (
     <Chip
-      label={value}
+      label={label}
       size='small'
       sx={{
         bgcolor: bg,
@@ -49,33 +50,38 @@ function StatusPill({ value }) {
 
 export default function ProjectsPage() {
   const [query, setQuery] = React.useState('');
-  const [open, setOpen] = React.useState(false);
+  const [openCreate, setOpenCreate] = React.useState(false);
   const [projects, setProjects] = React.useState([]);
+
+  // edit/delete
+  const [selected, setSelected] = React.useState(null);
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
 
   const router = useRouter();
 
-  const filtered = projects.filter(
-    (r) =>
-      r.name.toLowerCase().includes(query.toLowerCase()) ||
-      r.desc.toLowerCase().includes(query.toLowerCase())
-  );
   const load = React.useCallback(async () => {
     const res = await fetch('/api/projects', { cache: 'no-store' });
     const data = await res.json();
-    if (!res.ok) {
-      /* handle error */ return;
-    }
-    setProjects(data.projects);
+    if (!res.ok) return;
+    setProjects(data.projects || []);
   }, []);
   React.useEffect(() => {
     load();
   }, [load]);
+
+  const filtered = projects.filter((r) => {
+    const name = (r.name || '').toLowerCase();
+    const desc = (r.description || '').toLowerCase();
+    const q = query.toLowerCase();
+    return name.includes(q) || desc.includes(q);
+  });
+
   return (
     <>
       <AppHeader onSearch={setQuery} />
 
       <Container maxWidth='lg' sx={{ py: 6 }}>
-        {/* Title + New Project */}
         <Stack
           direction='row'
           justifyContent='space-between'
@@ -89,7 +95,7 @@ export default function ProjectsPage() {
             Projects
           </Typography>
           <Button
-            onClick={() => setOpen(true)}
+            onClick={() => setOpenCreate(true)}
             variant='contained'
             disableElevation
             sx={{
@@ -105,7 +111,6 @@ export default function ProjectsPage() {
           </Button>
         </Stack>
 
-        {/* Page search (big field under the title) */}
         <TextField
           fullWidth
           placeholder='Search'
@@ -120,22 +125,14 @@ export default function ProjectsPage() {
           }}
           sx={{
             mb: 3,
-            '& .MuiOutlinedInput-root': {
-              borderRadius: 2,
-              bgcolor: '#f5f7fb',
-            },
+            '& .MuiOutlinedInput-root': { borderRadius: 2, bgcolor: '#f5f7fb' },
           }}
         />
 
-        {/* Table */}
         <TableContainer
           component={Paper}
           elevation={0}
-          sx={{
-            border: '1px solid',
-            borderColor: 'divider',
-            borderRadius: 3,
-          }}
+          sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3 }}
         >
           <Table>
             <TableHead>
@@ -148,29 +145,72 @@ export default function ProjectsPage() {
                 <TableCell sx={{ fontWeight: 700, width: 140 }}>
                   Test Status
                 </TableCell>
+                <TableCell sx={{ fontWeight: 700, width: 200 }}>
+                  Actions
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {filtered.map((r) => (
                 <TableRow
-                  key={r.name}
+                  key={r.id}
                   hover
-                  onClick={() => router.push(`/projects/${r.id}`)}
+                  onClick={(e) => {
+                    if (e.target.closest('[data-row-action]')) return;
+                    router.push(`/projects/${r.id}`);
+                  }}
                   sx={{ cursor: 'pointer' }}
                 >
-                  <TableCell>{r.name}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{r.name}</TableCell>
                   <TableCell sx={{ color: 'text.secondary' }}>
-                    {r.description}
+                    {r.description || '—'}
                   </TableCell>
-                  <TableCell>{r._count.stories}</TableCell>
+                  <TableCell>
+                    {r?._count?.stories ?? r?.userStories ?? 0}
+                  </TableCell>
                   <TableCell>
                     <StatusPill value={r.testStatus} />
+                  </TableCell>
+                  <TableCell>
+                    <Stack direction='row' spacing={1}>
+                      <Button
+                        size='small'
+                        variant='outlined'
+                        data-row-action
+                        onClick={() => router.push(`/projects/${r.id}`)}
+                      >
+                        Open
+                      </Button>
+                      <Button
+                        size='small'
+                        variant='outlined'
+                        data-row-action
+                        onClick={() => {
+                          setSelected(r);
+                          setEditOpen(true);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size='small'
+                        color='error'
+                        variant='outlined'
+                        data-row-action
+                        onClick={() => {
+                          setSelected(r);
+                          setDeleteOpen(true);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </Stack>
                   </TableCell>
                 </TableRow>
               ))}
               {filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4}>
+                  <TableCell colSpan={5}>
                     <Box
                       sx={{
                         py: 4,
@@ -187,10 +227,35 @@ export default function ProjectsPage() {
           </Table>
         </TableContainer>
       </Container>
+
       <CreateProjectDialog
-        open={open}
-        onClose={() => setOpen(false)}
+        open={openCreate}
+        onClose={() => setOpenCreate(false)}
         onCreated={() => load()}
+      />
+
+      <EditProjectDialog
+        open={editOpen}
+        project={selected}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => {
+          setEditOpen(false);
+          load();
+        }}
+      />
+
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        title='Delete Project'
+        description='This will delete the project, its stories, and all generated tests/runs. This cannot be undone.'
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={async () => {
+          if (!selected) return;
+          await fetch(`/api/projects/${selected.id}`, { method: 'DELETE' });
+          setDeleteOpen(false);
+          setSelected(null);
+          load();
+        }}
       />
     </>
   );

@@ -1,4 +1,3 @@
-// src/app/projects/[id]/page.jsx
 'use client';
 
 import * as React from 'react';
@@ -14,21 +13,34 @@ import {
   TableHead,
   TableRow,
   Typography,
+  Stack,
 } from '@mui/material';
 import AppHeader from '@/components/AppHeader';
 import StoryStatusPill from '@/components/StoryStatusPill';
 import CreateStoryDialog from '@/components/CreateStoryDialog';
 import { useParams } from 'next/navigation';
+import StoryTestPanel from '@/components/StoryTestPanel';
+import EditStoryDialog from '@/components/EditStoryDialog';
+import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 
 export default function ProjectDetailPage() {
-  const params = useParams(); // { id }
+  const params = useParams();
   const projectId = params?.id;
 
   const [project, setProject] = React.useState(null);
   const [stories, setStories] = React.useState([]);
-  const [open, setOpen] = React.useState(false);
+  const [openCreate, setOpenCreate] = React.useState(false);
+
+  // Panel state
+  const [selectedStory, setSelectedStory] = React.useState(null);
+  const [panelOpen, setPanelOpen] = React.useState(false);
+
+  // Edit/Delete dialogs
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
 
   const load = React.useCallback(async () => {
+    if (!projectId) return;
     const [pRes, sRes] = await Promise.all([
       fetch(`/api/projects/${projectId}`, { cache: 'no-store' }),
       fetch(`/api/projects/${projectId}/stories`, { cache: 'no-store' }),
@@ -40,8 +52,13 @@ export default function ProjectDetailPage() {
   }, [projectId]);
 
   React.useEffect(() => {
-    if (projectId) load();
-  }, [projectId, load]);
+    load();
+  }, [load]);
+
+  const handleOpenPanel = (story) => {
+    setSelectedStory(story);
+    setPanelOpen(true);
+  };
 
   return (
     <>
@@ -59,8 +76,15 @@ export default function ProjectDetailPage() {
             User Stories
           </Typography>
           <Button
+            variant='outlined'
+            sx={{ mr: 2 }}
+            href={`/projects/${projectId}/report`}
+          >
+            Super View Report
+          </Button>
+          <Button
             variant='contained'
-            onClick={() => setOpen(true)}
+            onClick={() => setOpenCreate(true)}
             disableElevation
           >
             Add New Story
@@ -76,23 +100,75 @@ export default function ProjectDetailPage() {
             <TableHead>
               <TableRow>
                 <TableCell sx={{ fontWeight: 700 }}>Title</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: 200 }}>
+                <TableCell sx={{ fontWeight: 700 }}>Description</TableCell>
+                <TableCell sx={{ fontWeight: 700, width: 160 }}>
                   Status
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700, width: 220 }}>
+                  Actions
                 </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {stories.map((s) => (
-                <TableRow key={s.id} hover>
-                  <TableCell>{s.title}</TableCell>
+                <TableRow
+                  key={s.id}
+                  hover
+                  onClick={(e) => {
+                    if (e.target.closest('[data-row-action]')) return;
+                    handleOpenPanel(s);
+                  }}
+                  sx={{ cursor: 'pointer' }}
+                >
+                  <TableCell sx={{ fontWeight: 600 }}>{s.title}</TableCell>
+                  <TableCell sx={{ color: 'text.secondary' }}>
+                    {s.description && s.description.length > 80
+                      ? s.description.slice(0, 80) + '...'
+                      : s.description || '—'}
+                  </TableCell>
                   <TableCell>
                     <StoryStatusPill value={s.status} />
+                  </TableCell>
+                  <TableCell>
+                    <Stack direction='row' spacing={1}>
+                      <Button
+                        size='small'
+                        variant='outlined'
+                        data-row-action
+                        onClick={() => handleOpenPanel(s)}
+                      >
+                        Open Tester
+                      </Button>
+                      <Button
+                        size='small'
+                        variant='outlined'
+                        data-row-action
+                        onClick={() => {
+                          setSelectedStory(s);
+                          setEditOpen(true);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size='small'
+                        color='error'
+                        variant='outlined'
+                        data-row-action
+                        onClick={() => {
+                          setSelectedStory(s);
+                          setDeleteOpen(true);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </Stack>
                   </TableCell>
                 </TableRow>
               ))}
               {stories.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={2}>
+                  <TableCell colSpan={4}>
                     <Box
                       sx={{
                         py: 4,
@@ -111,10 +187,46 @@ export default function ProjectDetailPage() {
       </Container>
 
       <CreateStoryDialog
-        open={open}
+        open={openCreate}
         projectId={projectId}
-        onClose={() => setOpen(false)}
+        onClose={() => setOpenCreate(false)}
         onCreated={() => load()}
+      />
+
+      <EditStoryDialog
+        open={editOpen}
+        story={selectedStory}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => {
+          setEditOpen(false);
+          load();
+        }}
+        projectId={projectId}
+      />
+
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        title='Delete User Story'
+        description='This will remove the story and its generated tests/runs. This action cannot be undone.'
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={async () => {
+          if (!selectedStory) return;
+          await fetch(
+            `/api/projects/${projectId}/stories/${selectedStory.id}`,
+            { method: 'DELETE' }
+          );
+          setDeleteOpen(false);
+          setSelectedStory(null);
+          load();
+        }}
+      />
+
+      <StoryTestPanel
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        story={selectedStory}
+        projectId={projectId}
+        onRefreshProject={() => load()}
       />
     </>
   );
