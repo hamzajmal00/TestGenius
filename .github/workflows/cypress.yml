@@ -1,0 +1,105 @@
+name: Run Cypress (dispatched)
+
+on:
+  repository_dispatch:
+    types: [run-cypress]
+
+jobs:
+  cypress:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci
+
+      # Write the Cypress spec from payload
+      - name: Write spec from payload
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          mkdir -p cypress/e2e
+          node -e "
+          const fs=require('fs'); const pay=JSON.parse(process.env.PAYLOAD||'{}');
+          const code=(pay.testCode||'').replace(/\r\n/g,'\n');
+          const fname = 'generated-' + Date.now() + '.spec.cy.js';
+          fs.writeFileSync('cypress/e2e/'+fname, code);
+          console.log('Spec:', fname);
+          "
+
+      # Create cypress.config.js with baseUrl from payload URL
+      - name: Create Cypress config
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          node -e "
+          const fs=require('fs'); const pay=JSON.parse(process.env.PAYLOAD||'{}');
+          const baseUrl=new URL(pay.url).origin;
+          const cfg = `
+          const { defineConfig } = require('cypress');
+          module.exports = defineConfig({
+            e2e: {
+              baseUrl: '${baseUrl}',
+              supportFile: false,
+              viewportWidth: 1280,
+              viewportHeight: 720,
+              video: false,
+              screenshotOnRunFailure: true,
+              defaultCommandTimeout: 10000,
+              requestTimeout: 10000,
+              responseTimeout: 10000,
+            },
+          });
+          `;
+          fs.writeFileSync('cypress.config.js', cfg);
+          "
+
+      - name: Run Cypress
+        uses: cypress-io/github-action@v6
+        with:
+          browser: chrome
+          headed: false
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-artifacts
+          path: |
+            cypress/screenshots/**
+            cypress/videos/**
+
+      - name: Report back to the app
+        if: always()
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          node -e "
+            const https=require('https'); const { URL } = require('url');
+            const pay=JSON.parse(process.env.PAYLOAD||'{}');
+            const passed = '${{ job.status }}'==='success';
+            const body = JSON.stringify({
+              sharedSecret: pay.sharedSecret,
+              runId: pay.runId,
+              passed,
+              output: 'See GitHub Actions logs',
+              errorOutput: passed ? '' : 'Failed. See artifacts.',
+              testFilePath: ''
+            });
+            const u = new URL(pay.callbackUrl);
+            const opts = {
+              method:'POST',
+              hostname: u.hostname,
+              path: u.pathname,
+              headers: {'Content-Type':'application/json','Content-Length': Buffer.byteLength(body)}
+            };
+            const req=https.request(opts,(res)=>{res.on('data',()=>{});});
+            req.on('error',console.error); req.write(body); req.end();
+          "
