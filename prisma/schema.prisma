@@ -1,0 +1,58 @@
+// prisma/schema.prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String?
+  projects     Project[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  ownerId     String
+  name        String
+  description String?
+  userStories Int           @default(0) // 👈 NEW
+  testStatus  ProjectStatus @default(PENDING) // 👈 RENAMED from lastStatus
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  owner   User        @relation(fields: [ownerId], references: [id])
+  stories UserStory[]
+
+  @@index([ownerId])
+}
+
+enum ProjectStatus {
+  PASSING
+  FAILING
+  PENDING
+}
+
+model UserStory {
+  id          String      @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  status      StoryStatus @default(TODO)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  project     Project     @relation(fields: [projectId], references: [id])
+}
+
+enum StoryStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}

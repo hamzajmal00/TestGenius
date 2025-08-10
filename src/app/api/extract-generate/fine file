@@ -1,0 +1,270 @@
+import { NextResponse } from 'next/server';
+import puppeteer from 'puppeteer';
+import axios from 'axios';
+import fs from 'fs/promises';
+import path from 'path';
+import { exec } from 'child_process';
+import util from 'util';
+
+const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const MODEL_NAME = 'deepseek/deepseek-chat-v3-0324:free';
+const execPromise = util.promisify(exec);
+
+// ✅ Clean and extract test code only
+function cleanTestCode(raw) {
+  if (!raw) return '';
+
+  let cleaned = raw.replace(/```(javascript)?/g, '').trim();
+
+  const notesIndex = cleaned.indexOf('###');
+  if (notesIndex !== -1) {
+    cleaned = cleaned.slice(0, notesIndex).trim();
+  }
+
+  const describeIndex = cleaned.indexOf('describe');
+  if (describeIndex !== -1) {
+    cleaned = cleaned.slice(describeIndex);
+  }
+  cleaned = cleaned.replace(
+    /cy\.visit\((['"`][^'"`]+['"`])\)/g,
+    'cy.visit($1, { failOnStatusCode: false })'
+  );
+
+  return cleaned;
+}
+
+// ✅ Ensure Cypress directories exist
+async function ensureCypressStructure() {
+  const dirs = [
+    'cypress',
+    'cypress/e2e',
+    'cypress/fixtures',
+    'cypress/support',
+  ];
+
+  for (const dir of dirs) {
+    const dirPath = path.join(process.cwd(), dir);
+    try {
+      await fs.access(dirPath);
+    } catch {
+      await fs.mkdir(dirPath, { recursive: true });
+    }
+  }
+
+  // Create support files if they don't exist
+  const supportFile = path.join(process.cwd(), 'cypress/support/e2e.js');
+  try {
+    await fs.access(supportFile);
+  } catch {
+    await fs.writeFile(supportFile, '// Support file for e2e tests\n', 'utf-8');
+  }
+}
+
+export async function POST(req) {
+  try {
+    const { url, userStory } = await req.json();
+
+    // Validate inputs
+    if (!url || !userStory) {
+      return NextResponse.json(
+        { error: 'URL and user story are required' },
+        { status: 400 }
+      );
+    }
+
+    // 🌐 Parse base URL and path
+    const baseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
+    const pathname = parsedUrl.pathname;
+    console.log('🔗 URL:', baseUrl, pathname);
+    // const baseUrl = 'https://pdf-dev.valortech.co.mz';
+    // const pathname = '/auth/login';
+
+    // 👀 Puppeteer to extract form fields with better error handling
+    let browser;
+    let fields = { inputs: [], buttons: [] };
+
+    try {
+      browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'], // Better for server environments
+      });
+      const page = await browser.newPage();
+
+      // Set user agent to avoid bot detection
+      await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      );
+
+      await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+
+      fields = await page.evaluate(() => {
+        const inputs = Array.from(document.querySelectorAll('input')).map(
+          (i) => ({
+            name: i.name || i.id || i.placeholder,
+            type: i.type,
+            placeholder: i.placeholder,
+            id: i.id,
+            selector: i.name
+              ? `[name="${i.name}"]`
+              : i.id
+              ? `#${i.id}`
+              : `[placeholder="${i.placeholder}"]`,
+          })
+        );
+
+        const buttons = Array.from(
+          document.querySelectorAll('button, input[type="submit"]')
+        ).map((b) => ({
+          text: b.innerText?.trim() || b.value || 'Submit',
+          type: b.type,
+          selector: b.id
+            ? `#${b.id}`
+            : `button:contains("${b.innerText?.trim() || b.value}")`,
+        }));
+
+        return { inputs, buttons };
+      });
+    } catch (puppeteerError) {
+      console.warn('Puppeteer failed:', puppeteerError.message);
+      // Continue with empty fields if scraping fails
+    } finally {
+      if (browser) await browser.close();
+    }
+
+    // ✏️ Enhanced prompt for DeepSeek AI
+    const prompt = `Write a comprehensive Cypress test case based on this user story:
+
+${userStory}
+
+The form is located at: ${pathname}
+Use \`cy.visit('${pathname}')\` to visit the page. Assume baseUrl is configured as ${baseUrl}.
+
+Form fields detected:
+Inputs: ${JSON.stringify(fields.inputs, null, 2)}
+Buttons: ${JSON.stringify(fields.buttons, null, 2)}
+
+Requirements:
+1. Include proper waits and assertions
+2. Use data-cy attributes when possible, fallback to other selectors
+3. Handle form validation scenarios
+4. Include both positive and negative test cases
+5. Use meaningful test descriptions
+6. Include proper error handling
+
+Return only the test code without markdown formatting.`;
+
+    const response = await axios.post(
+      API_URL,
+      {
+        model: MODEL_NAME,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a senior QA engineer writing robust Cypress tests. Write complete, production-ready test code with proper assertions and error handling.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        temperature: 0.2,
+        max_tokens: 2000,
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        },
+        timeout: 30000,
+      }
+    );
+
+    const rawTestCode = response.data.choices[0].message.content;
+    const testCode = cleanTestCode(rawTestCode);
+
+    // 🏗️ Ensure Cypress structure exists
+    await ensureCypressStructure();
+
+    // 💾 Write test file with timestamp to avoid conflicts
+    const timestamp = Date.now();
+    const testFilePath = path.join(
+      process.cwd(),
+      'cypress',
+      'e2e',
+      `generated-${timestamp}.spec.cy.js`
+    );
+    await fs.writeFile(testFilePath, testCode, 'utf-8');
+
+    // ⚙️ Write enhanced Cypress config
+    const configPath = path.join(process.cwd(), 'cypress.config.js');
+    const configContent = `const { defineConfig } = require('cypress');
+
+module.exports = defineConfig({
+  e2e: {
+    baseUrl: '${baseUrl}',
+    viewportWidth: 1280,
+    viewportHeight: 720,
+    video: false,
+    screenshotOnRunFailure: true,
+    defaultCommandTimeout: 10000,
+    requestTimeout: 10000,
+    responseTimeout: 10000,
+    setupNodeEvents(on, config) {
+      // implement node event listeners here
+    },
+  },
+});
+`;
+    await fs.writeFile(configPath, configContent, 'utf-8');
+
+    // 🧪 Run Cypress test via CLI with better error handling
+    let testResult;
+    try {
+      const { stdout, stderr } = await execPromise(
+        `npx cypress run --spec "cypress/e2e/generated-${timestamp}.spec.cy.js" --browser chrome --headless`,
+        {
+          env: {
+            ...process.env,
+            ELECTRON_ENABLE_LOGGING: 'false',
+          },
+          timeout: 120000, // 2 minutes timeout
+        }
+      );
+
+      // Parse Cypress output for better results
+      const passed =
+        stdout.includes('All specs passed!') ||
+        (stdout.includes('passing') && !stdout.includes('failing'));
+
+      testResult = {
+        testCode,
+        passed,
+        output: stdout,
+        errorOutput: stderr,
+        testFilePath: `cypress/e2e/generated-${timestamp}.spec.cy.js`,
+      };
+    } catch (execError) {
+      // Handle execution errors gracefully
+      testResult = {
+        testCode,
+        passed: false,
+        output: execError.stdout || '',
+        errorOutput: execError.stderr || execError.message,
+        testFilePath: `cypress/e2e/generated-${timestamp}.spec.cy.js`,
+        executionError: true,
+      };
+    }
+
+    return NextResponse.json(testResult);
+  } catch (err) {
+    console.error('❌ Error:', err);
+    return NextResponse.json(
+      {
+        error: err.message,
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+      },
+      { status: 500 }
+    );
+  }
+}

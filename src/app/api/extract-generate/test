@@ -1,0 +1,138 @@
+// import { NextResponse } from 'next/server';
+// import puppeteer from 'puppeteer';
+// import axios from 'axios';
+
+// const MODEL_NAME = 'deepseek-coder-6.7b-instruct';
+// const API_URL = 'http://127.0.0.1:1234/v1/chat/completions';
+
+// export async function POST(req) {
+//   try {
+//     const { url, userStory } = await req.json();
+
+//     const browser = await puppeteer.launch({ headless: true });
+//     const page = await browser.newPage();
+//     await page.goto(url, { waitUntil: 'networkidle0' });
+
+//     const fields = await page.evaluate(() => {
+//       const inputs = Array.from(document.querySelectorAll('input')).map(
+//         (i) => ({
+//           name: i.name,
+//           type: i.type,
+//           placeholder: i.placeholder,
+//         })
+//       );
+
+//       const buttons = Array.from(document.querySelectorAll('button')).map(
+//         (b) => ({
+//           text: b.innerText.trim(),
+//         })
+//       );
+
+//       return { inputs, buttons };
+//     });
+
+//     await browser.close();
+
+//     const prompt = `Write a Cypress test case based on this user story:\n\n${userStory}\n\nThe form has the following fields:\nInputs:\n${JSON.stringify(
+//       fields.inputs,
+//       null,
+//       2
+//     )}\nButtons:\n${JSON.stringify(fields.buttons, null, 2)}`;
+
+//     const res = await axios.post(API_URL, {
+//       model: MODEL_NAME,
+//       messages: [
+//         {
+//           role: 'system',
+//           content: 'You are a senior QA engineer writing Cypress tests.',
+//         },
+//         { role: 'user', content: prompt },
+//       ],
+//       temperature: 0.2,
+//     });
+
+//     const testCode = res.data.choices[0].message.content;
+//     return NextResponse.json({ testCode });
+//   } catch (err) {
+//     console.error('❌ API Error:', err);
+//     return NextResponse.json({ error: err.message }, { status: 500 });
+//   }
+// }
+
+// import { NextResponse } from 'next/server';
+// import puppeteer from 'puppeteer';
+// import axios from 'axios';
+
+// const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+// const MODEL_NAME = 'deepseek/deepseek-chat-v3-0324:free';
+
+// export async function POST(req) {
+//   try {
+//     const { url, userStory } = await req.json();
+
+//     // Launch Puppeteer to visit the URL
+//     const browser = await puppeteer.launch({ headless: true });
+//     const page = await browser.newPage();
+//     await page.goto(url, { waitUntil: 'networkidle0' });
+
+//     // Extract input fields and button labels
+//     const fields = await page.evaluate(() => {
+//       const inputs = Array.from(document.querySelectorAll('input')).map(
+//         (i) => ({
+//           name: i.name,
+//           type: i.type,
+//           placeholder: i.placeholder,
+//         })
+//       );
+
+//       const buttons = Array.from(document.querySelectorAll('button')).map(
+//         (b) => ({
+//           text: b.innerText.trim(),
+//         })
+//       );
+
+//       return { inputs, buttons };
+//     });
+
+//     await browser.close();
+
+//     // Prepare prompt for the LLM
+//     const prompt = `Write a Cypress test case based on this user story:\n\n${userStory}\n\nThe form has the following fields:\nInputs:\n${JSON.stringify(
+//       fields.inputs,
+//       null,
+//       2
+//     )}\nButtons:\n${JSON.stringify(fields.buttons, null, 2)}`;
+
+//     // Call OpenRouter (DeepSeek V3)
+//     const response = await axios.post(
+//       API_URL,
+//       {
+//         model: MODEL_NAME,
+//         messages: [
+//           {
+//             role: 'system',
+//             content: 'You are a senior QA engineer writing Cypress tests.',
+//           },
+//           {
+//             role: 'user',
+//             content: prompt,
+//           },
+//         ],
+//         temperature: 0.2,
+//       },
+//       {
+//         headers: {
+//           'Content-Type': 'application/json',
+//           Authorization: `Bearer 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`,
+//         },
+//       }
+//     );
+
+//     const testCode = response.data.choices[0].message.content;
+
+//     return NextResponse.json({ testCode });
+//   } catch (err) {
+//     console.error('❌ Error:', err);
+//     return NextResponse.json({ error: err.message }, { status: 500 });
+//   }
+// }

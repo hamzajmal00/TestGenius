@@ -1,0 +1,12 @@
+As a registered user of the application
+I want to log in to my account using my email address and password
+So that I can access my personalized dashboard and account features
+Acceptance Criteria:
+
+I can enter my email address in the designated field
+I can enter my password in the password field (with characters masked for security)
+I can optionally check "Remember Me" to stay logged in on this device
+I can click the "Login" button to authenticate and access my account
+If I forget my password, I can click "Forget Password?" to initiate password recovery
+The system validates my credentials and either grants access or shows an error message
+Upon successful login, I am redirected to my account dashboard or the page I was trying to access
