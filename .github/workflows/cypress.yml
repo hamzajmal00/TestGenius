@@ -20,46 +20,53 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      # Write the Cypress spec from payload
+      # Write the Cypress spec from payload (safe heredoc)
       - name: Write spec from payload
         env:
           PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
-          mkdir -p cypress/e2e
-          node -e "
-          const fs=require('fs'); const pay=JSON.parse(process.env.PAYLOAD||'{}');
-          const code=(pay.testCode||'').replace(/\r\n/g,'\n');
+          node <<'NODE'
+          const fs = require('fs');
+          const pay = JSON.parse(process.env.PAYLOAD || '{}');
+          const code = String(pay.testCode || '').replace(/\r\n/g, '\n');
           const fname = 'generated-' + Date.now() + '.spec.cy.js';
-          fs.writeFileSync('cypress/e2e/'+fname, code);
+          fs.mkdirSync('cypress/e2e', { recursive: true });
+          fs.writeFileSync('cypress/e2e/' + fname, code);
           console.log('Spec:', fname);
-          "
+          NODE
 
-      # Create cypress.config.js with baseUrl from payload URL
+      # Create cypress.config.js with baseUrl from payload URL (safe heredoc)
       - name: Create Cypress config
         env:
           PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
-          node -e "
-          const fs=require('fs'); const pay=JSON.parse(process.env.PAYLOAD||'{}');
-          const baseUrl=new URL(pay.url).origin;
-          const cfg = `
-          const { defineConfig } = require('cypress');
-          module.exports = defineConfig({
-            e2e: {
-              baseUrl: '${baseUrl}',
-              supportFile: false,
-              viewportWidth: 1280,
-              viewportHeight: 720,
-              video: false,
-              screenshotOnRunFailure: true,
-              defaultCommandTimeout: 10000,
-              requestTimeout: 10000,
-              responseTimeout: 10000,
-            },
-          });
-          `;
+          node <<'NODE'
+          const fs = require('fs');
+          const pay = JSON.parse(process.env.PAYLOAD || '{}');
+          let baseUrl = 'http://localhost:3000';
+          try {
+            const u = new URL(pay.url);
+            baseUrl = u.origin;
+          } catch {}
+          const cfg = [
+            "const { defineConfig } = require('cypress');",
+            "module.exports = defineConfig({",
+            "  e2e: {",
+            "    baseUrl: '" + baseUrl + "',",
+            "    supportFile: false,",
+            "    viewportWidth: 1280,",
+            "    viewportHeight: 720,",
+            "    video: false,",
+            "    screenshotOnRunFailure: true,",
+            "    defaultCommandTimeout: 10000,",
+            "    requestTimeout: 10000,",
+            "    responseTimeout: 10000,",
+            "  },",
+            "});"
+          ].join("\n");
           fs.writeFileSync('cypress.config.js', cfg);
-          "
+          console.log('baseUrl:', baseUrl);
+          NODE
 
       - name: Run Cypress
         uses: cypress-io/github-action@v6
@@ -76,30 +83,54 @@ jobs:
             cypress/screenshots/**
             cypress/videos/**
 
+      # Report back to your app (safe heredoc; status via env)
       - name: Report back to the app
         if: always()
         env:
           PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          node -e "
-            const https=require('https'); const { URL } = require('url');
-            const pay=JSON.parse(process.env.PAYLOAD||'{}');
-            const passed = '${{ job.status }}'==='success';
-            const body = JSON.stringify({
-              sharedSecret: pay.sharedSecret,
-              runId: pay.runId,
-              passed,
-              output: 'See GitHub Actions logs',
-              errorOutput: passed ? '' : 'Failed. See artifacts.',
-              testFilePath: ''
+          node <<'NODE'
+          const { URL } = require('url');
+          const http = require('http');
+          const https = require('https');
+
+          const pay = JSON.parse(process.env.PAYLOAD || '{}');
+          const jobStatus = process.env.JOB_STATUS || 'failure';
+          const passed = jobStatus === 'success';
+
+          const body = JSON.stringify({
+            sharedSecret: pay.sharedSecret,
+            runId: pay.runId,
+            passed,
+            output: 'See GitHub Actions logs',
+            errorOutput: passed ? '' : 'Failed. See artifacts.',
+            testFilePath: '',
+            runUrl: process.env.RUN_URL
+          });
+
+          const u = new URL(pay.callbackUrl);
+          const lib = u.protocol === 'http:' ? http : https;
+          const opts = {
+            method: 'POST',
+            hostname: u.hostname,
+            port: u.port || (u.protocol === 'http:' ? 80 : 443),
+            path: u.pathname + (u.search || ''),
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body)
+            }
+          };
+
+          const req = lib.request(opts, (res) => {
+            let chunks = '';
+            res.on('data', d => { chunks += d; });
+            res.on('end', () => {
+              console.log('Callback status:', res.statusCode, chunks || '');
             });
-            const u = new URL(pay.callbackUrl);
-            const opts = {
-              method:'POST',
-              hostname: u.hostname,
-              path: u.pathname,
-              headers: {'Content-Type':'application/json','Content-Length': Buffer.byteLength(body)}
-            };
-            const req=https.request(opts,(res)=>{res.on('data',()=>{});});
-            req.on('error',console.error); req.write(body); req.end();
-          "
+          });
+          req.on('error', (e) => { console.error('Callback error:', e); process.exitCode = 0; });
+          req.write(body);
+          req.end();
+          NODE
