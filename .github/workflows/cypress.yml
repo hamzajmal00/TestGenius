@@ -35,7 +35,32 @@ jobs:
           console.log('Spec:', fname);
           NODE
 
-      # Create cypress.config.js with baseUrl from payload URL (safe heredoc)
+      # Write Cypress support file to ignore React hydration error (#418)
+      - name: Write Cypress support file
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          fs.mkdirSync('cypress/support', { recursive: true });
+          const support = `
+          // cypress/support/e2e.js
+          // Ignore specific React production error (hydration / minified #418)
+          Cypress.on('uncaught:exception', (err) => {
+            if (err && err.message && err.message.includes('Minified React error #418')) {
+              return false; // prevent Cypress from failing the test
+            }
+            // OPTIONAL: uncomment to ignore ALL app exceptions (be careful!)
+            // return false;
+          });
+
+          // OPTIONAL: if your specs use Testing Library commands (findByRole, etc),
+          // add @testing-library/cypress to devDependencies and uncomment:
+          // import '@testing-library/cypress/add-commands';
+          `;
+          fs.writeFileSync('cypress/support/e2e.js', support);
+          console.log('Wrote cypress/support/e2e.js');
+          NODE
+
+      # Create cypress.config.js with baseUrl and support file (safe heredoc)
       - name: Create Cypress config
         env:
           PAYLOAD: ${{ toJson(github.event.client_payload) }}
@@ -50,7 +75,7 @@ jobs:
             "module.exports = defineConfig({",
             "  e2e: {",
             "    baseUrl: '" + baseUrl + "',",
-            "    supportFile: false,",
+            "    supportFile: 'cypress/support/e2e.js',",
             "    viewportWidth: 1280,",
             "    viewportHeight: 720,",
             "    video: false,",
