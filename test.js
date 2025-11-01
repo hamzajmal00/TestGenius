@@ -1,2 +1,3 @@
-console.log('test');
-function solution(n) {}
+console.log('test dfdf dfdf dfdfd');
+function solution() {}
+console.log('test dfdf dfdf dfdfd');
