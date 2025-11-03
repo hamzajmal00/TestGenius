@@ -2,6 +2,6 @@ function solution() {
   1 + 2;
   return d;
 }
-diff dffd(){
+diff dfffdfdfsdasdsaddd(){
     return 42;
 }
