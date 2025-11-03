@@ -5,3 +5,8 @@ function solution() {
 diff dfffdfdfsdasdsaddd(){
     return 42;
 }
+dfdfs 
+fdsfdsf
+function anotherFunction() {
+    return "Hello, World!";
+}
