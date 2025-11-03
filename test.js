@@ -1,4 +1,4 @@
-
 function solution() {
-    1 fff
+  1 + 2;
+  return d;
 }
