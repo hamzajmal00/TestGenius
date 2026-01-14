@@ -26,7 +26,7 @@ import { yupResolver } from '@hookform/resolvers/yup';
 import { ContentCopy } from '@mui/icons-material';
 import { GridActionsCellItem } from '@mui/x-data-grid';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useDispatch, useSelector } from 'react-redux';
 import * as yup from 'yup';
@@ -153,7 +153,7 @@ export default function useCustomer() {
       setShouldClick(false);
     }
   }, [shouldClick]);
-  const getActionColumn = (statusText) => {
+  const getActionColumn = () => {
     return {
       field: 'actions',
       headerName: 'Action',
@@ -200,54 +200,6 @@ export default function useCustomer() {
         />,
       ],
     };
-  };
-
-  const getColumns = (dataObject) => {
-    const columns = [];
-    Object.keys(dataObject).forEach((key) => {
-      let columnObject = {
-        field: key,
-        headerName: FEATURES_TO_BE_SHOW[key],
-        headerClassName: 'table-heading ',
-        cellClassName: 'table-data ',
-        width: FEATURES_WIDTH[key],
-      };
-      if (!FEATURES_TO_BE_IGNORE.includes(key)) {
-        if (key === 'isActive') {
-          columnObject = {
-            ...columnObject,
-            renderCell: (params) => (
-              <span
-                className={
-                  params.value
-                    ? 'status-active tw-bg-[#1D4ED81A]'
-                    : 'status-error'
-                }
-              >
-                {params.value ? 'Active' : 'In-active'}
-              </span>
-            ),
-          };
-        }
-        if (FEATURES_TO_BE_SHOW[key]) {
-          columns.push(columnObject);
-        }
-      }
-    });
-    columns.push(getActionColumn('Active'));
-    return columns;
-  };
-
-  const initialColumnState = (columns) => {
-    return columns.reduce((acc, column, idx) => {
-      if (
-        DEFAULT_COLUMNS.includes(column.field) ||
-        column.field === 'actions'
-      ) {
-        acc[column.field] = true;
-      } else acc[column.field] = false;
-      return acc;
-    }, {});
   };
 
   const { handleCountryChange, cities, error, setError, setCountry, country } =
@@ -489,7 +441,6 @@ export default function useCustomer() {
     setValue: filterSetValue,
     reset: filterReset,
     control: filterControl,
-    formState: { errors: filterErrors },
   } = useForm();
 
   const onCountryChange = (e) => {
@@ -793,11 +744,7 @@ export default function useCustomer() {
     setSelectedRow(row);
   };
 
-  const handleUploadAction = (row) => {};
-
-  const handleManageColumns = () => {
-    setOpen(true);
-  };
+  const handleUploadAction = () => {};
 
   const onCommentSubmit = (data) => {
     const payloadData = {
@@ -813,9 +760,10 @@ export default function useCustomer() {
     }
   };
 
-  useMemo(() => {
-    if (debouncedSearchQuery && debouncedSearchQuery?.length !== 0) {
+  useEffect(() => {
+    if (debouncedSearchQuery && debouncedSearchQuery.length !== 0) {
       let query;
+
       if (selectedColumn === 'all') {
         query = {
           $or: [
@@ -840,14 +788,11 @@ export default function useCustomer() {
               ? parseInt(debouncedSearchQuery, 10)
               : { $iLike: `%${debouncedSearchQuery}%` },
         };
-        if (!DEFAULT_COLUMNS.includes(selectedColumn)) {
-          DEFAULT_COLUMNS.push(selectedColumn);
-        }
       }
 
-      fetchData(query);
+      fetchData(query); // ✔ SAFE
     } else {
-      fetchData();
+      fetchData(); // ✔ SAFE
     }
   }, [debouncedSearchQuery, selectedColumn]);
 
@@ -863,11 +808,6 @@ export default function useCustomer() {
 
   const handleItemsPerPage = (value) => {
     setItemsPerPage(value);
-  };
-
-  const handleUploadButtonClick = (row) => {
-    setRowData(row);
-    fileInputRef?.current?.click();
   };
 
   return {
